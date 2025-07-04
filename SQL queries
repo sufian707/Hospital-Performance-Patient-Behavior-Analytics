@@ -1,0 +1,135 @@
+-- ================================================
+-- DATABASE: HOSPITAL ANALYTICS
+-- Tool: MySQL
+-- ================================================
+USE hospital_db;
+
+-- ================================================
+-- OBJECTIVE 1: ENCOUNTERS OVERVIEW
+-- ================================================
+
+-- a. How many total encounters occurred each year?
+SELECT 
+    YEAR(start) AS year, 
+    COUNT(id) AS total_encounters
+FROM encounters 
+GROUP BY year 
+ORDER BY year;
+
+
+-- b. For each year, what percentage of all encounters belonged to each encounter class
+--    (ambulatory, outpatient, wellness, urgent care, emergency, and inpatient)?
+SELECT 
+    YEAR(start) AS year,
+    ROUND(SUM(CASE WHEN encounterclass = 'ambulatory' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS ambulatory,
+    ROUND(SUM(CASE WHEN encounterclass = 'outpatient' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS outpatient,
+    ROUND(SUM(CASE WHEN encounterclass = 'wellness' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS wellness,
+    ROUND(SUM(CASE WHEN encounterclass = 'urgentcare' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS urgentcare,
+    ROUND(SUM(CASE WHEN encounterclass = 'emergency' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS emergency,
+    ROUND(SUM(CASE WHEN encounterclass = 'inpatient' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS inpatient
+FROM encounters
+GROUP BY year
+ORDER BY year;
+
+
+-- c. What percentage of encounters were over 24 hours vs under 24 hours?
+SELECT 
+    ROUND(SUM(CASE WHEN TIMESTAMPDIFF(HOUR, start, stop) >= 24 THEN 1 ELSE 0 END) / COUNT(*), 4) AS over_24_hrs_pct,
+    ROUND(SUM(CASE WHEN TIMESTAMPDIFF(HOUR, start, stop) < 24 THEN 1 ELSE 0 END) / COUNT(*), 4) AS under_24_hrs_pct
+FROM encounters;
+
+-- ================================================
+-- OBJECTIVE 2: COST & COVERAGE INSIGHTS
+-- ================================================
+
+-- a. How many encounters had zero payer coverage? What percentage of total encounters is that?
+SELECT 
+    SUM(CASE WHEN payer_coverage = 0 THEN 1 ELSE 0 END) AS zero_payer_coverage,
+    COUNT(*) AS total_encounters,
+    ROUND(SUM(CASE WHEN payer_coverage = 0 THEN 1 ELSE 0 END) / COUNT(*), 4) AS pct_zero_payer_coverage
+FROM encounters;
+
+
+-- b. Top 10 most frequent procedures and their average base cost
+SELECT 
+    code, 
+    description, 
+    COUNT(*) AS num_procedures, 
+    ROUND(AVG(base_cost), 2) AS avg_base_cost
+FROM procedures
+GROUP BY code, description
+ORDER BY num_procedures DESC
+LIMIT 10;
+
+
+-- c. Top 10 most expensive procedures by average base cost
+SELECT 
+    code, 
+    description, 
+    ROUND(AVG(base_cost), 2) AS avg_base_cost, 
+    COUNT(*) AS num_procedures
+FROM procedures
+GROUP BY code, description
+ORDER BY avg_base_cost DESC
+LIMIT 10;
+
+
+-- d. Average total claim cost by payer
+SELECT 
+    p.name AS payer_name, 
+    ROUND(AVG(e.total_claim_cost), 2) AS avg_total_claim_cost
+FROM payers p
+LEFT JOIN encounters e ON p.id = e.payer
+GROUP BY p.name
+ORDER BY avg_total_claim_cost DESC;
+
+-- ================================================
+-- OBJECTIVE 3: PATIENT BEHAVIOR ANALYSIS
+-- ================================================
+
+-- a. Unique patients admitted each quarter over time
+SELECT 
+    YEAR(start) AS year, 
+    QUARTER(start) AS quarter, 
+    COUNT(DISTINCT patient) AS num_unique_patients
+FROM encounters
+GROUP BY year, quarter
+ORDER BY year, quarter;
+
+
+-- b. How many patients were readmitted within 30 days?
+WITH cte AS (
+    SELECT 
+        patient, 
+        start, 
+        stop,
+        LEAD(start) OVER (PARTITION BY patient ORDER BY start) AS next_start_date 
+    FROM encounters
+)
+SELECT 
+    COUNT(DISTINCT patient) AS num_patients_readmitted_within_30_days
+FROM cte 
+WHERE DATEDIFF(next_start_date, stop) < 30;
+
+
+-- c. Which patients had the most readmissions?
+WITH cte AS (
+    SELECT 
+        patient, 
+        start, 
+        stop,
+        LEAD(start) OVER (PARTITION BY patient ORDER BY start) AS next_start_date 
+    FROM encounters
+),
+readmission_counts AS (
+    SELECT 
+        patient, 
+        COUNT(*) AS num_readmissions 
+    FROM cte 
+    WHERE DATEDIFF(next_start_date, stop) < 30
+    GROUP BY patient
+)
+SELECT * 
+FROM readmission_counts
+ORDER BY num_readmissions DESC
+LIMIT 1 OFFSET 4;
